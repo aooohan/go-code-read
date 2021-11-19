@@ -17,19 +17,28 @@ limitations under the License.
 // Package consistenthash provides an implementation of a ring hash.
 package consistenthash
 
+// 一致性hash算法
+
 import (
 	"hash/crc32"
 	"sort"
 	"strconv"
 )
 
+// Hash hash函数
 type Hash func(data []byte) uint32
 
 type Map struct {
-	hash     Hash
+	// hash函数
+	hash Hash
+	// 副本个数
+	// 当真实节点少时，容易产生数据的倾斜，即大量的key打在了同一节点上,造成环负载作用并不是很大
+	// 因此通过增加真实节点的副本数量，使节点均匀分布在环上，解决倾斜的问题
 	replicas int
-	keys     []int // Sorted
-	hashMap  map[int]string
+	// hash 环
+	keys []int // Sorted
+	// 虚拟节点->真实节点的映射
+	hashMap map[int]string
 }
 
 func New(replicas int, fn Hash) *Map {
@@ -50,14 +59,17 @@ func (m *Map) IsEmpty() bool {
 }
 
 // Add adds some keys to the hash.
+// 向环上增加节点
 func (m *Map) Add(keys ...string) {
 	for _, key := range keys {
+		// 生产副本
 		for i := 0; i < m.replicas; i++ {
 			hash := int(m.hash([]byte(strconv.Itoa(i) + key)))
 			m.keys = append(m.keys, hash)
 			m.hashMap[hash] = key
 		}
 	}
+	// 排序，便于二分查找
 	sort.Ints(m.keys)
 }
 
@@ -70,6 +82,7 @@ func (m *Map) Get(key string) string {
 	hash := int(m.hash([]byte(key)))
 
 	// Binary search for appropriate replica.
+	// 二分查找
 	idx := sort.Search(len(m.keys), func(i int) bool { return m.keys[i] >= hash })
 
 	// Means we have cycled back to the first replica.

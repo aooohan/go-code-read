@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 // peers.go defines how processes find and communicate with their peers.
+// 在这里定义了，如何找到key对应的peer，以及如何于peer通讯
 
 package groupcache
 
@@ -28,12 +29,14 @@ import (
 type Context = context.Context
 
 // ProtoGetter is the interface that must be implemented by a peer.
+// 定义了与peer通讯的方法
 type ProtoGetter interface {
 	Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error
 }
 
 // PeerPicker is the interface that must be implemented to locate
 // the peer that owns a specific key.
+// 定义了如何通过key找到对应的peer
 type PeerPicker interface {
 	// PickPeer returns the peer that owns the specific key
 	// and true to indicate that a remote peer was nominated.
@@ -42,6 +45,7 @@ type PeerPicker interface {
 }
 
 // NoPeers is an implementation of PeerPicker that never finds a peer.
+// 默认配置，单机时，新创建的group中peers对应的就是NoPeers
 type NoPeers struct{}
 
 func (NoPeers) PickPeer(key string) (peer ProtoGetter, ok bool) { return }

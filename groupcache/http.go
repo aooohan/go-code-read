@@ -35,8 +35,11 @@ const defaultBasePath = "/_groupcache/"
 
 const defaultReplicas = 50
 
+// HTTPPool group是以http2.0 + protocol buffer 的方式进行peer直接的通讯
+// 使用一致性hash算法，来进行peer的选择
 // HTTPPool implements PeerPicker for a pool of HTTP peers.
 // http服务端
+// 在使用时，需要启动http服务
 type HTTPPool struct {
 	// Context optionally specifies a context for the server to use when it
 	// receives a request.
@@ -67,6 +70,8 @@ type HTTPPoolOptions struct {
 
 	// Replicas specifies the number of key replicas on the consistent hash.
 	// If blank, it defaults to 50.
+	// 一致性hash上，真是结点的副本的数量
+	// 真实节点少的情况下，可能会造成数据倾斜，因此通过增加真实节点副本的方法来解决此问题
 	Replicas int
 
 	// HashFn specifies the hash function of the consistent hash.
@@ -85,6 +90,7 @@ func NewHTTPPool(self string) *HTTPPool {
 	return p
 }
 
+// 全局只允许有一个http pool存在
 var httpPoolMade bool
 
 // NewHTTPPoolOpts initializes an HTTP pool of peers with the given options.
@@ -111,7 +117,9 @@ func NewHTTPPoolOpts(self string, o *HTTPPoolOptions) *HTTPPool {
 	}
 	// 感觉这里没有必要
 	p.peers = consistenthash.New(p.opts.Replicas, p.opts.HashFn)
-	// 注册全局的peerPicker
+	// 注册全局的peerPicker,在创建Group的时候会用到
+	// 因此如果使用分布式的方式，需要先进行HTTPool的创建,注册portPicker
+	// 否则New Group时，peers将会使用NoPeers
 	RegisterPeerPicker(func() PeerPicker { return p })
 	return p
 }
@@ -127,7 +135,7 @@ func (p *HTTPPool) Set(peers ...string) {
 	p.peers = consistenthash.New(p.opts.Replicas, p.opts.HashFn)
 	p.peers.Add(peers...)
 	p.httpGetters = make(map[string]*httpGetter, len(peers))
-	// 为每个peer配置一个getter
+	// 为每个peer配置一个getter，就是http的client端
 	for _, peer := range peers {
 		p.httpGetters[peer] = &httpGetter{transport: p.Transport, baseURL: peer + p.opts.BasePath}
 	}
@@ -140,12 +148,14 @@ func (p *HTTPPool) PickPeer(key string) (ProtoGetter, bool) {
 	if p.peers.IsEmpty() {
 		return nil, false
 	}
+	// 从hash 环上取出key对应的peer,并且不能是自己
 	if peer := p.peers.Get(key); peer != p.self {
 		return p.httpGetters[peer], true
 	}
 	return nil, false
 }
 
+// http handler,对外提供http服务
 func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Parse request.
 	if !strings.HasPrefix(r.URL.Path, p.opts.BasePath) {
@@ -162,12 +172,16 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := parts[1]
 
 	// Fetch the value for this group/key.
+	// 先从当前instance上获取group，再从group上获取value
 	group := GetGroup(groupName)
 	if group == nil {
 		http.Error(w, "no such group: "+groupName, http.StatusNotFound)
 		return
 	}
+	// ctx会在Get方法穿透下去，一直到请求其他peer的request,
+	// 其他地方并未做context的相关处理
 	var ctx context.Context
+	// 如果没实现Context方法，则默认使用request的context
 	if p.Context != nil {
 		ctx = p.Context(r)
 	} else {
@@ -175,8 +189,8 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	group.Stats.ServerRequests.Add(1)
+	// 检索数据，并将结果放入value
 	var value []byte
-	// 检索数据
 	err := group.Get(ctx, key, AllocatingByteSliceSink(&value))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -207,6 +221,7 @@ var bufferPool = sync.Pool{
 }
 
 func (h *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error {
+	// 拼接对应peer的url
 	u := fmt.Sprintf(
 		"%v%v/%v",
 		h.baseURL,

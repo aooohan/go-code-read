@@ -26,6 +26,7 @@ import (
 //
 // Implementation of Getter must call exactly one of the Set methods
 // on success.
+// 接受Get返回的数据,可以是byte，string，proto,切片
 type Sink interface {
 	// SetString sets the value to s.
 	SetString(s string) error
