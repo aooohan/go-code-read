@@ -171,7 +171,6 @@ type Group struct {
 	// loadGroup ensures that each key is only fetched once
 	// (either locally or remotely), regardless of the number of
 	// concurrent callers.
-	// 确保每个key只能从拉取一次
 	loadGroup flightGroup
 
 	_ int32 // force Stats to be 8-byte aligned on 32-bit platforms
@@ -248,7 +247,7 @@ func (g *Group) Get(ctx context.Context, key string, dest Sink) error {
 // load loads key either by invoking the getter locally or by sending it to another machine.
 func (g *Group) load(ctx context.Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	g.Stats.Loads.Add(1)
-	// 确保同key的拉去数据(local or remote)的操作,同一时间只执行一次
+	// 确保同key的拉去数据(local or remote)的操作,同一时间只执行一次，即使有多个load请求
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
 		// Check the cache again because singleflight can only dedup calls
 		// that overlap concurrently.  It's possible for 2 concurrent
